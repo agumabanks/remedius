@@ -34,7 +34,7 @@ print_step() { echo -e "${PURPLE}[STEP]${NC} $1"; }
 print_success() { echo -e "${CYAN}[SUCCESS]${NC} $1"; }
 
 # Enhanced dependency checking
-check_dependencies() {
+check_dependencies2() {
     print_header "Checking Enhanced Dependencies"
     
     local missing_deps=()
@@ -87,6 +87,213 @@ check_dependencies() {
     fi
     
     print_success "All dependencies satisfied (PHP $PHP_VERSION, Node v$(node -v | sed 's/^v//'))"
+}
+
+
+# Enhanced dependency checking + auto-install (Ubuntu/Debian)
+check_dependencies() {
+    # --- minimal fallback printers if your script doesn't define them ---
+    type print_header  >/dev/null 2>&1 || print_header(){ echo -e "\n\033[1;36m== $*\033[0m"; }
+    type print_error   >/dev/null 2>&1 || print_error(){  echo -e "\033[1;31m[ERROR]\033[0m $*"; }
+    type print_success >/dev/null 2>&1 || print_success(){echo -e "\033[1;32m[OK]\033[0m $*"; }
+    type print_warn    >/dev/null 2>&1 || print_warn(){   echo -e "\033[1;33m[WARN]\033[0m $*"; }
+
+    print_header "Checking Enhanced Dependencies"
+
+    # --- helpers ---
+    SUDO=""
+    if [ "$EUID" -ne 0 ]; then
+      if command -v sudo >/dev/null 2>&1; then SUDO="sudo -E"; else
+        print_error "Please run as root or install sudo."
+        exit 1
+      fi
+    fi
+
+    os_id="$(. /etc/os-release; echo "${ID:-ubuntu}")"
+    os_codename="$(. /etc/os-release; echo "${VERSION_CODENAME:-jammy}")"
+    ver_ge(){ dpkg --compare-versions "$1" ge "$2"; } # usage: ver_ge "8.3.0" "8.2"
+
+    $SUDO apt-get update -y
+    $SUDO apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release apt-transport-https software-properties-common
+
+    # --- PHP (>=8.2) + common extensions ---
+    if ! command -v php >/dev/null 2>&1; then
+      print_header "Installing PHP (distro default, must be >=8.2)"
+      $SUDO apt-get install -y php php-cli php-fpm php-xml php-curl php-gd php-mbstring php-zip php-mysql php-redis || true
+    fi
+    if command -v php >/dev/null 2>&1; then
+      PHP_VERSION="$(php -r 'echo PHP_VERSION;')"
+      if ! ver_ge "$PHP_VERSION" "8.2"; then
+        print_warn "PHP >= 8.2 required; found $PHP_VERSION. Consider enabling a newer PHP repo if needed."
+      else
+        print_success "PHP $PHP_VERSION OK"
+      fi
+    else
+      print_error "PHP not installed."
+    fi
+
+    # --- Composer ---
+    if ! command -v composer >/dev/null 2>&1; then
+      print_header "Installing Composer"
+      php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+      php composer-setup.php --install-dir=/usr/local/bin --filename=composer || true
+      rm -f composer-setup.php
+      command -v composer >/dev/null 2>&1 && print_success "Composer installed" || print_error "Composer install failed"
+    else
+      print_success "Composer present ($(composer --version | awk '{print $3}'))"
+    fi
+
+    # --- Node.js (>=18) + npm via NodeSource (installs current LTS 20.x) ---
+    need_node=0
+    if ! command -v node >/dev/null 2>&1; then need_node=1
+    else
+      NODE_V="$(node -v | sed 's/^v//')"
+      if ! ver_ge "$NODE_V" "18.0.0"; then need_node=1; fi
+    fi
+    if [ "$need_node" -eq 1 ]; then
+      print_header "Installing Node.js (NodeSource LTS)"
+      curl -fsSL "https://deb.nodesource.com/setup_20.x" | $SUDO -E bash -
+      $SUDO apt-get install -y nodejs
+    fi
+    if command -v node >/dev/null 2>&1; then
+      NODE_V="$(node -v | sed 's/^v//')"
+      if ver_ge "$NODE_V" "18.0.0"; then print_success "Node.js v$NODE_V OK"; else print_warn "Node <18 detected (v$NODE_V)"; fi
+    else
+      print_error "Node.js not installed."
+    fi
+    command -v npm >/dev/null 2>&1 || print_warn "npm missing (should be installed with Node.js)."
+
+    # --- Git ---
+    command -v git >/dev/null 2>&1 || { print_header "Installing Git"; $SUDO apt-get install -y git; }
+
+    # --- MySQL Server (>=8.0) ---
+    if ! command -v mysql >/dev/null 2>&1; then
+      print_header "Installing MySQL Server"
+      $SUDO apt-get install -y mysql-server || true
+      $SUDO systemctl enable --now mysql || true
+    fi
+    if command -v mysql >/dev/null 2>&1; then
+      MYSQL_V="$(mysql --version | sed -E 's/.*Distrib ([0-9]+\.[0-9]+).*/\1/')"
+      if ver_ge "$MYSQL_V" "8.0"; then print_success "MySQL $MYSQL_V OK"
+      else print_warn "MySQL <8.0 detected ($MYSQL_V). For strict 8.x+, use MySQL APT repo (mysql-apt-config)."
+      fi
+    else
+      print_error "MySQL not installed."
+    fi
+
+    # --- Redis Server ---
+    if ! command -v redis-server >/dev/null 2>&1; then
+      print_header "Installing Redis Server"
+      $SUDO apt-get install -y redis-server
+      $SUDO systemctl enable --now redis-server || true
+    else
+      print_success "Redis present ($(redis-server --version | awk '{print $3}'))"
+    fi
+
+    # --- Firebase CLI (standalone installer; npm fallback) ---
+    if ! command -v firebase >/dev/null 2>&1; then
+      print_header "Installing Firebase CLI"
+      (curl -sL https://firebase.tools | $SUDO bash) || {
+        print_warn "Standalone installer failed; falling back to npm -g."
+        $SUDO apt-get install -y nodejs npm || true
+        $SUDO npm install -g firebase-tools || true
+      }
+      command -v firebase >/dev/null 2>&1 && print_success "Firebase CLI installed" || print_error "Firebase CLI install failed"
+    else
+      print_success "Firebase CLI present ($(firebase --version 2>/dev/null || echo '?'))"
+    fi
+
+    # --- Docker Engine + Compose plugin (official repo) ---
+    if ! command -v docker >/dev/null 2>&1; then
+      print_header "Installing Docker Engine + Compose plugin"
+      $SUDO install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL "https://download.docker.com/linux/${os_id}/gpg" | $SUDO gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      $SUDO chmod a+r /etc/apt/keyrings/docker.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${os_id} ${os_codename} stable" | $SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
+      $SUDO apt-get update -y
+      $SUDO apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      $SUDO systemctl enable --now docker || true
+      # add invoking user to docker group
+      if [ -n "${SUDO_USER:-}" ]; then $SUDO usermod -aG docker "$SUDO_USER" || true; fi
+    else
+      # ensure compose plugin present
+      $SUDO apt-get install -y docker-compose-plugin || true
+    fi
+    # shim for legacy "docker-compose" command
+    if ! command -v docker-compose >/dev/null 2>&1; then
+      for p in /usr/lib/docker/cli-plugins/docker-compose /usr/libexec/docker/cli-plugins/docker-compose; do
+        [ -f "$p" ] && { $SUDO ln -sf "$p" /usr/local/bin/docker-compose; break; }
+      done
+    fi
+    command -v docker >/dev/null 2>&1 && print_success "Docker: $(docker --version)"
+    docker compose version >/dev/null 2>&1 && print_success "Compose plugin OK" || print_warn "Compose plugin not found"
+
+    # --- Nginx (optional, install if missing) ---
+    if ! command -v nginx >/dev/null 2>&1; then
+      print_header "Installing Nginx (optional)"
+      $SUDO apt-get install -y nginx || true
+      $SUDO systemctl enable --now nginx || true
+    fi
+
+    # --- Supervisor (optional) ---
+    if ! command -v supervisord >/dev/null 2>&1; then
+      print_header "Installing Supervisor (optional)"
+      $SUDO apt-get install -y supervisor || true
+      $SUDO systemctl enable --now supervisor || true
+    fi
+
+    # --- Flutter (>=3.16) via Snap (fallback to tar if snap not present) ---
+    need_flutter=0
+    if ! command -v flutter >/dev/null 2>&1; then need_flutter=1; fi
+    if [ "$need_flutter" -eq 1 ]; then
+      if command -v snap >/dev/null 2>&1; then
+        print_header "Installing Flutter via Snap"
+        $SUDO snap install flutter --classic || true
+      else
+        print_header "Installing Snapd for Flutter"
+        $SUDO apt-get install -y snapd
+        $SUDO systemctl enable --now snapd.socket || true
+        $SUDO snap install flutter --classic || true
+      fi
+      command -v flutter >/dev/null 2>&1 || print_warn "Flutter not on PATH yet; you may need to re-login for /snap/bin"
+    fi
+    if command -v flutter >/dev/null 2>&1; then
+      FLUTTER_V="$(flutter --version 2>/dev/null | head -n1 | awk '{print $2}')"
+      print_success "Flutter installed (v${FLUTTER_V:-unknown})"
+    fi
+
+    # --- Final version checks ---
+    PHP_VERSION="$(php -r 'echo PHP_VERSION;' 2>/dev/null || echo '0.0.0')"
+    NODE_V="$(node -v 2>/dev/null | sed 's/^v//')"
+    version_errors=()
+    ver_ge "$PHP_VERSION" "8.2" || version_errors+=("PHP 8.2+ required, found $PHP_VERSION")
+    ver_ge "${NODE_V:-0.0.0}" "18.0.0" || version_errors+=("Node.js 18+ required, found v${NODE_V:-?}")
+
+    if [ ${#version_errors[@]} -ne 0 ]; then
+        print_error "Version requirements not met:"
+        for e in "${version_errors[@]}"; do echo "  - $e"; done
+        print_warn "You may need to enable newer language repos or upgrade OS."
+        return 1
+    fi
+
+    echo ""
+    echo "========== SUMMARY =========="
+    printf "PHP:        %s\n"    "${PHP_VERSION}"
+    printf "Composer:   %s\n"    "$(command -v composer >/dev/null 2>&1 && composer --version | awk '{print $3}' || echo 'NOT FOUND')"
+    printf "Node:       v%s\n"   "${NODE_V:-NOT FOUND}"
+    printf "npm:        %s\n"    "$(command -v npm >/dev/null 2>&1 && npm -v || echo 'NOT FOUND')"
+    printf "Git:        %s\n"    "$(command -v git >/dev/null 2>&1 && git --version | awk '{print $3}' || echo 'NOT FOUND')"
+    printf "MySQL:      %s\n"    "$(command -v mysql >/dev/null 2>&1 && mysql --version | sed -E 's/.*Distrib ([0-9.]+).*/\1/' || echo 'NOT FOUND')"
+    printf "Redis:      %s\n"    "$(command -v redis-server >/dev/null 2>&1 && redis-server --version | awk '{print $3}' || echo 'NOT FOUND')"
+    printf "Firebase:   %s\n"    "$(command -v firebase >/dev/null 2>&1 && firebase --version || echo 'NOT FOUND')"
+    printf "Docker:     %s\n"    "$(command -v docker >/dev/null 2>&1 && docker --version | sed 's/,.*//' || echo 'NOT FOUND')"
+    printf "Compose:    %s\n"    "$(docker compose version 2>/dev/null | head -n1 || command -v docker-compose >/dev/null 2>&1 && docker-compose version | head -n1 || echo 'NOT FOUND')"
+    printf "Nginx:      %s\n"    "$(command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | sed 's/^nginx version: //;s#/.*##' || echo 'NOT FOUND')"
+    printf "Supervisor: %s\n"    "$(command -v supervisord >/dev/null 2>&1 && supervisord -v || echo 'NOT FOUND')"
+    printf "Flutter:    %s\n"    "$(command -v flutter >/dev/null 2>&1 && flutter --version 2>/dev/null | head -n1 || echo 'NOT FOUND')"
+    echo "============================="
+    print_success "All required deps present (PHP >=8.2, Node >=18 checked)."
+    [ -n "${SUDO_USER:-}" ] && print_warn "If you were added to the 'docker' group, log out/in to use Docker without sudo."
 }
 
 # Enhanced workspace creation
