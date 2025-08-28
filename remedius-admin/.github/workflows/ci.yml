@@ -13,6 +13,7 @@ jobs:
         with: { php-version: '8.3' }
       - run: composer install --no-interaction --prefer-dist
       - run: cp .env.example .env && php artisan key:generate
+      - run: php -r "file_exists('database/database.sqlite') || touch('database/database.sqlite');"
       - run: php artisan migrate --no-interaction -vvv
       - run: ./vendor/bin/pint --test || true
       - run: ./vendor/bin/pest || true

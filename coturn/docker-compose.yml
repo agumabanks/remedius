@@ -3,8 +3,13 @@ services:
   coturn:
     image: instrumentisto/coturn:latest
     container_name: coturn
-    network_mode: host
     restart: unless-stopped
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "5349:5349/tcp"
+      - "5349:5349/udp"
+      - "49152-65535:49152-65535/udp"
     volumes:
       - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
       - ./certs:/etc/coturn/certs:ro
