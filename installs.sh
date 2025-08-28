@@ -296,28 +296,124 @@ check_dependencies() {
     [ -n "${SUDO_USER:-}" ] && print_warn "If you were added to the 'docker' group, log out/in to use Docker without sudo."
 }
 
-# Enhanced workspace creation
+ # Enhanced workspace creation function
 create_enhanced_workspace() {
-    print_header "Creating Enhanced Workspace Structure"
+    # Set default if WORKSPACE_DIR not defined
+    WORKSPACE_DIR="${WORKSPACE_DIR:-./enhanced-workspace}"
     
+    # Simple colored output functions
+    local GREEN='\033[0;32m'
+    local YELLOW='\033[1;33m'
+    local RED='\033[0;31m'
+    local BLUE='\033[0;34m'
+    local NC='\033[0m'
+    
+    echo -e "\n${BLUE}=== Creating Enhanced Workspace Structure ===${NC}\n"
+    
+    # Check if workspace already exists
     if [ -d "$WORKSPACE_DIR" ]; then
-        print_warning "Workspace exists. Continue? (y/N)"
+        echo -e "${YELLOW}⚠ Workspace directory '$WORKSPACE_DIR' already exists.${NC}"
+        echo -n "Continue? This may overwrite existing files. (y/N): "
         read -r response
-        [[ ! "$response" =~ ^[Yy]$ ]] && exit 1
+        
+        if [[ ! "$response" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+            echo -e "${YELLOW}⚠ Operation cancelled.${NC}"
+            return 1
+        fi
     fi
     
-    mkdir -p "$WORKSPACE_DIR"
-    cd "$WORKSPACE_DIR"
+    # Create main workspace directory
+    if ! mkdir -p "$WORKSPACE_DIR"; then
+        echo -e "${RED}✗ Failed to create workspace directory: $WORKSPACE_DIR${NC}"
+        return 1
+    fi
     
-    # Create comprehensive directory structure
-    mkdir -p {docs,scripts,assets,firebase,docker,tests,deployment,monitoring,backups}
-    mkdir -p {logs,storage,uploads,certificates,config}
-    mkdir -p docs/{api,architecture,deployment,user-guides}
-    mkdir -p scripts/{deployment,maintenance,backup,monitoring}
-    mkdir -p docker/{production,development,services}
+    # Change to workspace directory
+    if ! cd "$WORKSPACE_DIR"; then
+        echo -e "${RED}✗ Failed to change to workspace directory: $WORKSPACE_DIR${NC}"
+        return 1
+    fi
     
-    print_success "Enhanced workspace created: $(pwd)"
+    echo -e "${GREEN}✓ Working in: $(pwd)${NC}"
+    
+    # Create directory structure with error handling
+    local dirs=(
+        "docs" "scripts" "assets" "firebase" "docker" 
+        "tests" "deployment" "monitoring" "backups"
+        "logs" "storage" "uploads" "certificates" "config"
+        "docs/api" "docs/architecture" "docs/deployment" "docs/user-guides"
+        "scripts/deployment" "scripts/maintenance" "scripts/backup" "scripts/monitoring"
+        "docker/production" "docker/development" "docker/services"
+        "tests/unit" "tests/integration" "tests/e2e"
+        "config/environments" "config/templates"
+    )
+    
+    echo "Creating directories..."
+    for dir in "${dirs[@]}"; do
+        if mkdir -p "$dir" 2>/dev/null; then
+            echo -e "${GREEN}✓ Created: $dir/${NC}"
+        else
+            echo -e "${RED}✗ Failed to create: $dir/${NC}"
+            return 1
+        fi
+    done
+    
+    # Create essential files
+    echo "Creating essential files..."
+    
+    # Basic README
+    cat > README.md << 'EOF'
+# Enhanced Workspace
+
+Development workspace with organized directory structure.
+
+## Structure
+- docs/ - Documentation
+- scripts/ - Automation scripts  
+- docker/ - Docker configs
+- tests/ - Test files
+- config/ - Configuration files
+EOF
+    
+    # Basic .gitignore
+    cat > .gitignore << 'EOF'
+logs/
+*.log
+node_modules/
+.env
+*.key
+*.pem
+uploads/*
+storage/*
+backups/*.sql
+.DS_Store
+.vscode/
+.idea/
+EOF
+    
+    # Create .gitkeep for empty dirs
+    for dir in logs storage uploads backups certificates; do
+        touch "$dir/.gitkeep"
+    done
+    
+    # Basic config template
+    cat > config/config.template.json << 'EOF'
+{
+  "environment": "development",
+  "server": {
+    "port": 3000,
+    "host": "localhost"
+  }
 }
+EOF
+    
+    echo -e "\n${GREEN}✓ Enhanced workspace created successfully!${NC}"
+    echo -e "${GREEN}✓ Location: $(pwd)${NC}"
+    
+    return 0
+}
+
+
 
 # Advanced Laravel backend setup
 setup_advanced_laravel_backend() {
