@@ -1,0 +1,12 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /attachments/{threadId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    match /prescriptions/{encounterId}/{fileName} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

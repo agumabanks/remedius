@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  coturn:
+    image: instrumentisto/coturn:latest
+    container_name: coturn
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ./certs:/etc/coturn/certs:ro

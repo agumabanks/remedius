@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+    function role() { return request.auth.token.role; }
+    function isAdmin() { return role() == 'admin' || role() == 'superadmin'; }
+    function uid() { return request.auth.uid; }
+
+    function inThread(thread) {
+      return thread.data.participants.hasAny([uid()]);
+    }
+
+    match /threads/{threadId} {
+      allow read: if isSignedIn() && inThread(resource);
+      allow create: if isSignedIn() && request.resource.data.participants.hasAll([uid()]);
+      allow update, delete: if isSignedIn() && inThread(resource);
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn() && inThread(get(/databases/$(database)/documents/threads/$(threadId)));
+        allow create: if isSignedIn() &&
+          inThread(get(/databases/$(database)/documents/threads/$(threadId))) &&
+          request.resource.data.senderId == uid();
+        allow update, delete: if false;
+      }
+    }
+
+    match /signals/{callId} {
+      allow read, write: if isSignedIn() &&
+        (request.resource.data.participants.hasAny([uid()]) ||
+         resource.data.participants.hasAny([uid()]));
+    }
+
+    match /presence/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && userId == uid();
+    }
+
+    match /config/{doc} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}
